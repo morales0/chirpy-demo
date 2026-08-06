@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync/atomic"
@@ -40,6 +41,13 @@ type apiHandler struct{}
 
 func (apiHandler) ServeHTTP(http.ResponseWriter, *http.Request) {}
 
+func errorResponse(msg string, w http.ResponseWriter) {
+	// Write the headers
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	w.Write([]byte(fmt.Sprintf("{ \"error\": \"%v\" }", msg)))
+}
+
 func main() {
 	const port = "8080"
 	var cfg apiConfig
@@ -47,6 +55,33 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/app/", cfg.middlewareIncrement(http.StripPrefix("/app", http.FileServer(http.Dir("./")))))
 
+	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, req *http.Request) {
+		type ReqPayload struct {
+			Body string `json:"body"`
+		}
+		// Read the body and decode into a struct
+		var reqPayload ReqPayload
+		decoder := json.NewDecoder(req.Body)
+		err := decoder.Decode(&reqPayload)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("{ \"error\": \"Invalid request\" }"))
+			return
+		}
+
+		// Validate the data
+		if len([]byte(reqPayload.Body)) > 140 {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("{ \"error\": \"Chirp is too long\" }"))
+			return
+		}
+		// Otherwise construct succcess message
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{ \"valid\": true }"))
+	})
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)

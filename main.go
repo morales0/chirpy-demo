@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 	"sync/atomic"
 )
 
@@ -48,6 +50,25 @@ func errorResponse(msg string, w http.ResponseWriter) {
 	w.Write([]byte(fmt.Sprintf("{ \"error\": \"%v\" }", msg)))
 }
 
+// Turns a string into a profanity censored string
+func censorProfanity(input string) string {
+	badWords := []string{"kerfuffle", "sharbert", "fornax"}
+
+	var cleanedString strings.Builder
+	for word := range strings.SplitSeq(input, " ") {
+		normWord := strings.ToLower(word)
+		if slices.Contains(badWords, normWord) {
+			cleanedString.WriteString("****")
+		} else {
+			cleanedString.WriteString(word)
+		}
+
+		cleanedString.WriteString(" ")
+	}
+
+	return strings.TrimSpace(cleanedString.String())
+}
+
 func main() {
 	const port = "8080"
 	var cfg apiConfig
@@ -70,17 +91,22 @@ func main() {
 			return
 		}
 
+		chirp := string(reqPayload.Body)
+
 		// Validate the data
-		if len([]byte(reqPayload.Body)) > 140 {
+		if len(chirp) > 140 {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte("{ \"error\": \"Chirp is too long\" }"))
 			return
 		}
+
+		chirp = censorProfanity(chirp)
+
 		// Otherwise construct succcess message
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{ \"valid\": true }"))
+		w.Write([]byte(fmt.Sprintf("{ \"cleaned_body\": \"%s\" }", chirp)))
 	})
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

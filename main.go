@@ -1,16 +1,23 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
+
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"github.com/morales0/chirpy-demo/internal/database"
 )
 
 type apiConfig struct {
 	fileServerHits atomic.Int32
+	dbQueries      *database.Queries
 }
 
 func (cfg *apiConfig) middlewareIncrement(next http.Handler) http.Handler {
@@ -70,8 +77,18 @@ func censorProfanity(input string) string {
 }
 
 func main() {
+	godotenv.Load()
+
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		fmt.Println("Error connecting to database")
+		return
+	}
+	dbQueries := database.New(db)
 	const port = "8080"
 	var cfg apiConfig
+	cfg.dbQueries = dbQueries
 
 	mux := http.NewServeMux()
 	mux.Handle("/app/", cfg.middlewareIncrement(http.StripPrefix("/app", http.FileServer(http.Dir("./")))))

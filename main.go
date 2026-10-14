@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/morales0/chirpy-demo/internal/database"
@@ -18,6 +19,7 @@ import (
 type apiConfig struct {
 	fileServerHits atomic.Int32
 	dbQueries      *database.Queries
+	platform       string
 }
 
 func (cfg *apiConfig) middlewareIncrement(next http.Handler) http.Handler {
@@ -42,8 +44,65 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(page))
 }
 func (cfg *apiConfig) resetHandler(w http.ResponseWriter, req *http.Request) {
+	if cfg.platform != "dev" {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 	cfg.fileServerHits.Store(0)
+	// delete all users in the database
+	cfg.dbQueries.DeleteAllUsers(req.Context())
 	w.WriteHeader(http.StatusOK)
+}
+
+func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, req *http.Request) {
+	// Load the email from the body of the request
+	type ReqPayload struct {
+		Email string `json:"email"`
+	}
+	var reqPayload ReqPayload
+	decoder := json.NewDecoder(req.Body)
+	err := decoder.Decode(&reqPayload)
+	if err != nil {
+		// TODO: Move this to a func?
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("{ \"error\": \"Invalid request\" }"))
+		return
+	}
+	email := reqPayload.Email
+
+	// Call the CreateUser function
+	newUser, err := cfg.dbQueries.CreateUser(req.Context(), email)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("{ \"error\": \"%v\" }", err)))
+		return
+	}
+
+	// If successful, return the response payload
+	type RespPayload struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt string    `json:"created_at"`
+		UpdatedAt string    `json:"updated_at"`
+		Email     string    `json:"email"`
+	}
+	resp := RespPayload{
+		ID:        newUser.ID,
+		CreatedAt: newUser.CreatedAt.String(),
+		UpdatedAt: newUser.UpdatedAt.String(),
+		Email:     newUser.Email,
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("{ \"error\": \"Failed to construct response\" }"))
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusCreated)
+	w.Write(data)
 }
 
 type apiHandler struct{}
@@ -85,10 +144,10 @@ func main() {
 		fmt.Println("Error connecting to database")
 		return
 	}
-	dbQueries := database.New(db)
 	const port = "8080"
 	var cfg apiConfig
-	cfg.dbQueries = dbQueries
+	cfg.dbQueries = database.New(db)
+	cfg.platform = os.Getenv("PLATFORM")
 
 	mux := http.NewServeMux()
 	mux.Handle("/app/", cfg.middlewareIncrement(http.StripPrefix("/app", http.FileServer(http.Dir("./")))))
@@ -133,6 +192,7 @@ func main() {
 
 	mux.HandleFunc("GET /admin/metrics", cfg.metricsHandler)
 	mux.HandleFunc("POST /admin/reset", cfg.resetHandler)
+	mux.HandleFunc("POST /api/users", cfg.createUserHandler)
 
 	server := &http.Server{
 		Addr:    ":" + port,

@@ -174,3 +174,74 @@ func (cfg *apiConfig) chirpHandler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	w.Write(data)
 }
+
+func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
+	// Fetch them from the database
+	chirps, err := cfg.db.FetchAllChirpsOrderedByCreatedAsc(req.Context())
+	if err != nil {
+		respondWithError(w, "Error fetching chirps", err, http.StatusInternalServerError)
+	}
+
+	type RespPayload struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt string    `json:"created_at"`
+		UpdatedAt string    `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+	var jsonChirps []RespPayload
+	for _, chirp := range chirps {
+		jsonChirp := RespPayload{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt.String(),
+			UpdatedAt: chirp.UpdatedAt.String(),
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		}
+
+		jsonChirps = append(jsonChirps, jsonChirp)
+	}
+	data, err := json.Marshal(jsonChirps)
+
+	// Return the array
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
+
+func (cfg *apiConfig) getChirpHandler(w http.ResponseWriter, req *http.Request) {
+	// Get the id from the path
+	pathId := req.PathValue("chirpId")
+	id, err := uuid.Parse(pathId)
+	if err != nil {
+		respondWithError(w, "Invalid chirp id", err, http.StatusBadRequest)
+		return
+	}
+
+	// Fetch the chirp from the database
+	chirp, err := cfg.db.GetChirp(req.Context(), id)
+	if err != nil {
+		respondWithError(w, "Failed to fetch chirp", err, http.StatusNotFound)
+		return
+	}
+
+	// Return the data
+	type RespPayload struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt string    `json:"created_at"`
+		UpdatedAt string    `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+	chirpData := RespPayload{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt.String(),
+		UpdatedAt: chirp.UpdatedAt.String(),
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	}
+	data, err := json.Marshal(chirpData)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
